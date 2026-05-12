@@ -17,8 +17,10 @@ exception Error of string
 let whitespace_char_no_newline = [' ' '\t' '\012' '\r']+
 let digit = ['0'-'9']
 let int = digit digit*
-let letter = ['a'-'z' 'A'-'Z']
-let id = letter ['a'-'z' 'A'-'Z' '0'-'9' '_' '?']*
+let lowercase_letter = ['a'-'z']
+let id = lowercase_letter ['a'-'z' 'A'-'Z' '0'-'9' '_' '?']*
+let uppercase_letter = ['A'-'Z']
+let constructor = uppercase_letter ['a'-'z' 'A'-'Z']*
 
 (* Entry points:
    read, comment *)
@@ -29,6 +31,7 @@ rule read =
   | '\n'      { Lexing.new_line lexbuf; read lexbuf }
   | "(*"      { comment lexbuf; read lexbuf } (* activate "comment" rule *)                 
   | int       { INT (int_of_string (Lexing.lexeme lexbuf)) }
+  | "'"       { SINGLE_RIGHT_QUOTATION_MARK }
   | "+"       { PLUS }
   | "-"       { MINUS }
   | "*"       { TIMES }
@@ -37,6 +40,8 @@ rule read =
   | ")"       { RPAREN }
   | "{"       { LBRACE }
   | "}"       { RBRACE }
+  | "["      { LBRACKET }
+  | "]"      { RBRACKET }
   | "<"       { LANGLE }
   | ">"       { RANGLE }
   | "<<"      { LLANGLE }
@@ -62,7 +67,7 @@ rule read =
   | "then"    { THEN }
   | "else"    { ELSE }
   | "letrec"  { LETREC }
-  | "set"     { SET }
+  | ":="     { SET }
   | "begin"   { BEGIN }
   | "end"     { END }
   | "newref"  { NEWREF }
@@ -84,6 +89,12 @@ rule read =
   | "->"        { ARROW }  
   | "of"        { OF }
   | "send"    { SEND }
+  | "module"   { MODULE }
+  | "interface" { INTERFACE }
+  | "body" { BODY }
+  | "from" { FROM }
+  | "take" { TAKE }
+  | "open" { OPEN }
   | "class"   { CLASS }
   | "super"   { SUPER }
   | "extends" { EXTENDS }
@@ -94,7 +105,6 @@ rule read =
   | "empty?"   { ISEMPTY }
   | "implements"  { IMPLEMENTS }
   | "instanceof?"  { INSTANCEOF }
-  | "interface"  { INTERFACE }
   | "cast"   { CAST }
   (* types *)
   | "int"    { INTTYPE }
@@ -130,7 +140,15 @@ rule read =
   | "inserthtbl"   { INSERTHTBL }
   | "lookuphtbl"   { LOOKUPHTBL }
   | "removehtbl"   { REMOVEHTBL }
-  | id       { ID (Lexing.lexeme lexbuf) }
+  (* Variant types *)
+  | "|"        { PIPE }
+  | "type"     { TYPE }
+  | "case"     { CASE }
+  (* Types declared by modules *)
+  | "opaque"        { OPAQUE }
+  | "transparent"   { TRANSPARENT }
+  | constructor     { CONSTRUCTOR (Lexing.lexeme lexbuf) }
+  | id         { ID (Lexing.lexeme lexbuf) }
   | eof      { EOF }
   | _
       { raise (Error (Printf.sprintf

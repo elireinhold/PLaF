@@ -14,6 +14,8 @@ open Ast
 
 %token <int> INT
 %token <string> ID
+%token <string> CONSTRUCTOR
+%token SINGLE_RIGHT_QUOTATION_MARK
 %token PLUS
 %token MINUS
 %token TIMES
@@ -24,6 +26,8 @@ open Ast
 %token RBRACE
 %token LANGLE
 %token RANGLE
+%token LBRACKET
+%token RBRACKET
 %token LLANGLE
 %token RRANGLE
 %token ABS
@@ -63,6 +67,12 @@ open Ast
 %token OF
 %token DEBUG
 %token SEND
+%token MODULE
+%token INTERFACE 
+%token BODY 
+%token FROM 
+%token TAKE 
+%token OPEN 
 %token CLASS
 %token EXTENDS
 %token SUPER
@@ -84,7 +94,6 @@ open Ast
 %token SIZE
 %token IMPLEMENTS
 %token INSTANCEOF
-%token INTERFACE
 %token CAST
 %token MKSET 
 %token EMPTYSET 
@@ -110,17 +119,23 @@ open Ast
 %token SETTYPE "sett"
 %token QUEUETYPE "queue"
 %token HTBLTYPE "htbl"
+%token PIPE
+%token TYPE
+%token CASE
+%token OPAQUE
+%token TRANSPARENT
 %token EOF
 
 (* Precedence and associativity *)
 
 %nonassoc IN ELSE EQUALS EQUALSMUTABLE  /* lowest precedence */
-%right ARROW
+%right ARROW SET
+%right LISTTYPE SETTYPE STACKTYPE QUEUETYPE TREETYPE REFTYPE
 %left PLUS MINUS LLANGLE RRANGLE  
 %left TIMES DIVIDED 
-%left DOT    /* highest precedence */
-%nonassoc REFTYPE LISTTYPE TREETYPE
-                          (*%nonassoc UMINUS        /* highest precedence */*)
+%left DOT   /* highest precedence */
+(* %nonassoc REFTYPE LISTTYPE TREETYPE *)
+(*%nonassoc UMINUS        /* highest precedence */*)
 
 
 (* Start symbol of the grammar *)
@@ -138,7 +153,7 @@ open Ast
    The action says to return value [AProg(cls,e)]. *)
 
 prog:
- | cls = list(iface_or_class_decl); e = expr; EOF { AProg(cls,e) }
+ | cls = list(iface_or_class_or_module_decl); e = expr; EOF { AProg(cls,e) }
 
 (* The remaining rules address expressions and class declarations. *)
 
@@ -173,7 +188,7 @@ expr:
 | DEREF; LPAREN; e = expr; RPAREN { DeRef(e) }
 | SETREF; LPAREN; e1 = expr; COMMA; e2 = expr; RPAREN { SetRef(e1,e2) }
 | IF; e1 = expr; THEN; e2 = expr; ELSE; e3 = expr { ITE(e1,e2,e3) }
-| SET; x = ID; EQUALS; e = expr { Set(x,e) }
+| x = ID; SET; e = expr { Set(x,e) }
 | BEGIN; es = separated_list(SEMICOLON, expr); END { BeginEnd(es) }
 | LPAREN; e = expr; RPAREN {e}
   (*    | MINUS e = expr %prec UMINUS { SubExp(IntExp 0,e) }*)
@@ -232,7 +247,18 @@ expr:
 | INSERTHTBL; LPAREN; e1 = expr; COMMA; e2 = expr; COMMA; e3 = expr; RPAREN { InsertHtbl(e1,e2,e3) }
 | LOOKUPHTBL; LPAREN; e1 = expr; COMMA; e2 = expr; RPAREN { LookupHtbl(e1,e2) }
 | REMOVEHTBL; LPAREN; e1 = expr; COMMA; e2 = expr; RPAREN { RemoveHtbl(e1,e2) }
-
+(* Modules *)
+| FROM; x = ID; TAKE; y = ID { QualVar(x,y) }
+| OPEN; x=ID; IN; e=expr { Open(x,e) }
+(* adts *)
+| id = CONSTRUCTOR; LPAREN; es = separated_list(COMMA, expr);
+  RPAREN { Variant(id,es) }
+| CASE; body=expr; OF; LBRACE;
+      bs = nonempty_list(case_branch); RBRACE { Case(body,bs) }
+| TYPE; id=ID; EQUALS; cs = nonempty_list(constructor_decl)
+                                  { TypeDecl(id,cs) }
+  
+    ;
 rdecs:
 | x = ID; LPAREN; y = ID; targ=option(type_annotation); RPAREN;
   tres=option(type_annotation); EQUALS;
@@ -248,13 +274,34 @@ field:
 fieldtype:
 | id = ID; COLON; t=texpr { (id,t) }
 
-iface_or_class_decl:
+iface_or_class_or_module_decl:
 | CLASS; id1=ID; EXTENDS; id2=ID; id3=option(implements_declaration);
   LBRACE; ofs = list(obj_fields); mths = list(method_decl); RBRACE
   { Class(id1,id2,id3,ofs,mths)}
 | INTERFACE; id=ID; LBRACE; amths = list(abstract_method_decl); RBRACE
   { Interface(id,amths)}
+| MODULE; x=ID; INTERFACE; i=minterfc; BODY;
+  b=mbody { Module (x,i,b) }
+        ;
 
+minterfc:
+        | LBRACKET; ds=list(mvdecl); RBRACKET { ModuleSimpleInterface (ds) }
+        ;
+mvdecl:
+        |  x=ID; COLON; t=texpr { ModuleValueDecl (x,t) }
+        | OPAQUE; id=ID { ModuleOpaqueTypeDecl id }
+        | TRANSPARENT; id=ID; EQUALS; t=texpr { ModuleTransparentTypeDecl (id,t) }
+        ;
+     
+mbody:
+        | LBRACKET; ds=list(mvdef); RBRACKET { ModuleBody (ds) }
+        ;
+
+mvdef:
+        | x=ID; EQUALS; e=expr { ValueDef (x,e) }
+        | TYPE; id=ID; EQUALS; t=texpr { TypeDef(id,t) } 
+          ;
+            
 implements_declaration:
 | IMPLEMENTS; id=ID { id }
 
@@ -278,9 +325,22 @@ abstract_method_decl:
                   
 formal_par:
 | id=ID; t = option(type_annotation) { (id, t) }
-                  
+
+case_branch:
+    (* | id = CONSTRUCTOR; ARROW; tgt=expr { CaseBranch(id,[],tgt) } *)
+    | id = CONSTRUCTOR; LPAREN; es = separated_list(COMMA, ID);
+      RPAREN; ARROW; tgt=expr { CaseBranch(id,es,tgt) }
+      ;
+        
+constructor_decl:
+    (* | PIPE; id = CONSTRUCTOR { Constructor (id,[]) } *)
+    | PIPE; id = CONSTRUCTOR; LPAREN; es = separated_list(COMMA, texpr);
+      RPAREN  { Constructor (id,es) }
+      ;
+        
 texpr:
 | id=ID { UserType(id) }
+| SINGLE_RIGHT_QUOTATION_MARK; id=ID { TypeVar(id) }  
 | "int" { IntType } (* tried testing the use of token aliases *)
 | "bool" { BoolType }
 | "unit" { UnitType }
@@ -290,11 +350,16 @@ texpr:
 | "ref"; t1 = texpr { RefType(t1) }
 | "tree"; t1 = texpr { TreeType(t1) }
 | "list"; t1 = texpr { ListType(t1) }
-| "sett"; LPAREN; t1 = texpr; RPAREN; { SetType(t1) }
-| "queue"; LPAREN; t1 = texpr; RPAREN { QueueType(t1) }
-| "stack"; LPAREN; t1 = texpr; RPAREN { StackType(t1) }
+| "sett"; t1 = texpr;  { SetType(t1) }
+| "queue"; t1 = texpr;  { QueueType(t1) }
+| "stack"; t1 = texpr; { StackType(t1) }
 | "htbl";  LPAREN; t1 = texpr; COMMA; t2 = texpr; RPAREN { HtblType(t1,t2) }
-| LBRACE; ts = separated_list(SEMICOLON, fieldtype); RBRACE { RecordType(ts) }
+| LBRACE; ts = separated_list(SEMICOLON, fieldtype);
+  RBRACE { RecordType(ts) }
+| LANGLE; ts = separated_list(COMMA, texpr);
+  RANGLE { TupleType(ts) }
+| FROM; id = ID; TAKE; tid = ID { QualType(id,tid) }
+
      
 
     

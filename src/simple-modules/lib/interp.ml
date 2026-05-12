@@ -1,23 +1,17 @@
-open Ast
+open Parser_plaf.Ast
+open Parser_plaf.Parser
 open ReM
 open Ds
-
-
   
 let g_store = Store.empty_store 20 (NumVal 0)
 
-
-let rec apply_clos : string*Ast.expr*env -> exp_val -> exp_val ea_result =
-  fun (id,e,en) ev ->
-  return en >>+
-  extend_env id ev >>+
-  eval_expr e
-and
-  eval_expr : expr -> exp_val ea_result =
+let rec eval_expr : expr -> exp_val ea_result =
   fun e ->
   match e with
-  | Int(n) -> return @@ NumVal n
-  | Var(id) -> apply_env id
+  | Int(n) ->
+    return @@ NumVal n
+  | Var(id) ->
+    apply_env id
   | QualVar(module_id,var_id) -> 
     apply_env_qual module_id var_id
   | Unit -> return UnitVal
@@ -66,10 +60,12 @@ and
     return (ProcVal(id,e,en))
   | App(e1,e2)  -> 
     eval_expr e1 >>= 
-    clos_of_procVal >>= fun clos ->
-    eval_expr e2 >>= 
-    apply_clos clos 
-  | Letrec(_ty,id,par,_tParam,e,target) ->
+    clos_of_procVal >>= fun (id,e,en) ->
+    eval_expr e2 >>= fun ev ->
+    return en >>+
+    extend_env id ev >>+
+    eval_expr e
+  | Letrec([id,par,_tParam,_tRes,e],target) ->
     extend_env_rec id par e >>+
     eval_expr target 
   | BeginEnd([]) ->
@@ -90,8 +86,8 @@ and
     Store.set_ref g_store v1 v2 >>= fun _ ->
     return UnitVal
   | Open(id,e) ->
-    lookup_module id >>= 
-    append_env >>+
+    lookup_module_bindings id >>= 
+    extend_env_with_bindings >>+
     eval_expr e
   | Debug(_e) ->
     string_of_env >>= fun str_env ->
@@ -100,38 +96,44 @@ and
     error "Reached breakpoint"
   | _ -> failwith ("Not implemented: "^string_of_expr e)
 and
-  (* add_module_definition : module_body -> env ea_result = fun (AModBody vdefs) ->
-   * lookup_env >>= fun en ->
-   * (List.fold_left (fun p (AValDef(var,decl))  ->
-   *      p >>= fun (env,renv) ->
-   *      return env >>+
-   *      eval_expr decl >>= fun ev ->
-   *      return (ExtendEnv(var,ev,env),ExtendEnv(var,ev,renv)))
-   *     (return (en,EmptyEnv))
-   *     vdefs) >>= fun (_,renv) ->
-   * return renv *)
-  eval_module_definition : module_body -> env ea_result = fun (AModBody vdefs) ->
-  lookup_env >>= fun glo_env ->
-  List.fold_left (fun loc_env (var,decl)  ->
-       loc_env >>+
+  eval_module_definition : module_body -> env ea_result =
+  fun (ModuleBody vdefs) ->
+  let rec eval_body_defs glo_env vdefs =
+    (match vdefs with
+     | [] -> lookup_env
+     | (ValueDef (var,decl))::t ->
+       lookup_env >>+
        (append_env_rev glo_env >>+
         eval_expr decl >>=
-        extend_env var))
-      (empty_env ())
-      vdefs
+        extend_env var) >>+
+       eval_body_defs glo_env t
+     | (TypeDef (_id,_typ))::t ->
+       lookup_env >>+       
+       eval_body_defs glo_env t)
+  in lookup_env >>= fun glo_env -> (* grab prior module declarations  *)
+  empty_env () >>+                 (* start from empty environment *)
+  eval_body_defs glo_env vdefs     (* add body definitions *)
 and
-  eval_module_definitions : module_decl list -> env ea_result = fun ms ->
-  List.fold_left
-    (fun curr_en (AModDecl(mname,_minterface,mbody)) ->
-       curr_en >>+
-       (eval_module_definition mbody >>= 
-        extend_env_mod mname))
-    lookup_env
-    ms
- and
+  eval_module_definitions : decl list -> env ea_result =
+  fun ms ->
+  (match ms with
+  | [] -> lookup_env
+  | Module(mname,_minterface,mbody)::t ->
+    eval_module_definition mbody >>= 
+    extend_env_mod mname >>+
+    eval_module_definitions t
+  | _ -> error "eval_module_definitions: not a valid module")
+and
    eval_prog (AProg(ms,e)) : exp_val ea_result =
    eval_module_definitions ms >>+
    eval_expr e
 
+(** [interp s] parses [s] and then evaluates it *)
+let interp (s:string) : exp_val result =
+  let c = s |> parse |> eval_prog
+  in run c
 
-
+(** [interpf file_name] evaluates program in file [file_name] *)
+let interpf (file_name: string) : exp_val result = 
+  let c = file_name |> parsef |> eval_prog in
+  run c

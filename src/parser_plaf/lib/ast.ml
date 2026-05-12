@@ -1,7 +1,7 @@
 (* The type of the abstract syntax tree (AST). *)
 
 type 
-  prog = AProg of (cdecl list)*expr
+  prog = AProg of (decl list)*expr
 and
   expr =
   | Var of string
@@ -79,26 +79,56 @@ and
   | InsertHtbl of expr*expr*expr
   | LookupHtbl of expr*expr
   | RemoveHtbl of expr*expr
+  (* modules *)
+  | Open of string*expr
+  | QualVar of string*string
+  (* adts *)
+  | Variant of string*(expr list)
+  | Case of expr*(case_branch list)
+  | TypeDecl of string*(constructor_decl list)
   | Debug of expr
+  (* type declaration branch *)
+and
+  case_branch =
+  | CaseBranch of string*string list*expr
+and
+  constructor_decl =
+  | Constructor of string*texpr list 
 and (* recursive function declarations *)
   rdecs = (string*string*texpr option*texpr option*expr) list
-and (* class declarations *)
-  cdecl =
+and (* class/interface/module declarations *)
+  decl =
   | Class of string*string*string option*(string*texpr option) list*mdecl list
   | Interface of string*abs_mdecl list
-and (* method declarations *)
+  | Module of string*module_interface*module_body           
+and (* method declaration *)
   mdecl = Method of string*texpr option*(string*texpr option) list*expr
-and (* abstract method declarations *)
+and (* abstract method declaration *)
   abs_mdecl = MethodAbs of string*texpr*(string*texpr option) list
+and  (* module interface declaration *)
+  module_interface = ModuleSimpleInterface of module_vdecl list
+and (* module body declaration *)
+  module_body = ModuleBody of module_vdef list
+and
+  module_vdecl =
+  | ModuleValueDecl of string*texpr
+  | ModuleOpaqueTypeDecl of string
+  | ModuleTransparentTypeDecl of string*texpr
+and
+  module_vdef =
+  | ValueDef of string*expr
+  | TypeDef of string*texpr
 and 
   texpr =
   | UserType of string
+  | TypeVar of string
   | IntType
   | BoolType
   | UnitType
   | FuncType of texpr*texpr
   | RefType of texpr
-  | ListType of texpr
+  | TupleType of texpr list
+  | ListType of texpr      
   | TreeType of texpr
   | StackType of texpr
   | SetType of texpr
@@ -106,6 +136,7 @@ and
   | HtblType of texpr*texpr          
   | RecordType of (string*texpr) list
   | PairType of texpr*texpr
+  | QualType of string*string
 
 
 let rec string_of_expr e =
@@ -197,17 +228,21 @@ and
 and
   string_of_texpr = function
   | UserType id -> id
+  | TypeVar id -> "'"^id
   | IntType -> "int"
   | BoolType -> "bool"
   | UnitType -> "unit"
-  | FuncType(t1,t2) -> "("^string_of_texpr t1^"->"^string_of_texpr t2^")"
+  | TupleType(ts) -> "<"^ String.concat "," (List.map string_of_texpr ts)^">"
+  | FuncType(t1,t2) -> "("^string_of_texpr t1^" -> "^string_of_texpr t2^")"
   | RefType(t) -> "Ref("^string_of_texpr t^")"
   | ListType(t) -> "List("^string_of_texpr t^")"
   | TreeType(t) -> "Tree("^string_of_texpr t^")"
   | RecordType(fs) -> "RecordType("^ String.concat "," (List.map (fun (id,t) ->
   id^":"^string_of_texpr t) fs) ^")"
-  | PairType(t1,t2) -> "("^string_of_texpr t1^"*"^string_of_texpr t2^")"
+  | PairType(t1,t2) -> "("^string_of_texpr t1^" * "^string_of_texpr t2^")"
   | StackType(t) -> "Stack("^string_of_texpr t^")"
   | SetType(t) -> "Set("^string_of_texpr t^")"
   | QueueType(t) -> "Queue("^string_of_texpr t^")"
-  | HtblType(t1,t2) ->  "Htbl("^string_of_texpr t1^","^string_of_texpr t2^")"
+  | HtblType(t1,t2) ->  "Htbl("^string_of_texpr t1^","^string_of_texpr
+                          t2^")"
+  | QualType(id1,id2) -> id1^"."^id2
